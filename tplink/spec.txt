@@ -1,0 +1,36 @@
+main loop
+- poll MCU status
+- record events:
+  - machine power ON/OFF
+  - user sign in/out
+- update display state
+	- idle
+	- session
+	- goodbye
+
+event struct:
+- timestamp
+- type = PWR_ON, PWR_OFF, USER_IN, USER_OUT
+- odo reading
+- user ID
+
+- idle screen
+----------------
+Tag your key...
+Odo: XXXXXX s
+
+- welcome/session screen
+1   5    0    56
+Hi FIRSTNAME!
+Odo: XXXXXX s
+----------------
+Time:     Cost: 
+XXX:XX   $XXX.XX
+
+- done screen
+Bye FIRSTNAME!
+Odo: XXXXXX s
+----------------
+Time:     Cost: 
+XXX:XX   $XXX.XX
+
