@@ -1,3 +1,4 @@
+#!/usr/bin/lua
 -- config
 PORT_NAME = "/dev/ttyACM0"
 READ_TIMEOUT = 2000	-- in ms
@@ -22,6 +23,12 @@ http = require("socket.http")
 ltn12 = require("ltn12")
 dofile("key.lua")
 
+-- DO NOT CALL THIS WITH REMOTELY RETURNED DATA (like error messages!!!!)
+function logger(msg)
+	print(msg)
+	os.execute(('logger -t laserboss "%q"'):format(msg))
+end
+
 -- error handling device
 function try(f, catch_f)
 	local status, exception = pcall(f)
@@ -31,7 +38,7 @@ end
 function update_keys()
 	local t = {}
 	local b, c = http.request{ url = "https://acemonstertoys.wpengine.com/wp-json/amt/v1/rfids/active",
-		headers = {["X-Amt-Auth"] = AUTH_KEY},
+		headers = {["X-Amt-Auth"] = WP_KEY},
 		method = "GET",
 		redirect = true,
 		sink = ltn12.sink.table(t)
@@ -47,8 +54,39 @@ function update_keys()
 		i = i+1
 	end
 	assert(i > 0, "Got 0 keys")
-	print("Updated active key list, " .. i .. " entries")
+	logger("Updated active key list, " .. i .. " entries")
 	active_keys = outtbl
+end
+
+function submit_event(ts, evtype, userid, odo)
+	local t = {}
+	local b, c = http.request{ url = "https://acemonstertoys.org/laser/api.php?timestamp=" .. ts .. "&odometer=" .. odo .. "&event=" .. evtype .. "&rfid=" .. userid,
+		headers = {["X-Amt-Auth"] = LASER_KEY},
+		method = "GET",
+		redirect = true,
+		sink = ltn12.sink.table(t)
+		}
+	assert(c == 200, "Got " .. c .. " instead of 200 when submitting event")
+	assert(b == 1, "Got " .. b .. " instead of 1 when submitting event")
+	local response = table.concat(t)
+	assert(string.sub(response, 1, 2) == 'OK', "Response is " .. response)
+	print("Submitted event: ", ts, evtype, userid, odo)
+end
+
+function upload_journal()
+	-- query the db
+	local cur = conn:execute("SELECT * from log ORDER BY id")
+	local row = {}
+	local ok
+	-- fetch, submit, and delete each journal record
+	repeat
+		ok = cur:fetch(row, 'a')
+		if ok then
+			submit_event(row['time'], row['evtype'], row['user_key_id'], row['odometer'])
+			conn:execute("DELETE FROM log WHERE id="..row['id'])
+			conn:commit()
+		end
+	until ok == nil
 end
 
 function open_port()
@@ -62,6 +100,9 @@ function open_port()
 	assert(p:set_stop_bits(rs232.RS232_STOP_1) == rs232.RS232_ERR_NOERROR, "Error setting stop bits")
 	assert(p:set_flow_control(rs232.RS232_FLOW_OFF) == rs232.RS232_ERR_NOERROR, "Error setting flow off")
 	p:flush()
+	-- if an rfid got scanned at some point before we booted, ignore it
+	get_status()
+	get_rfid()
 end
 
 function display (line1, line2)
@@ -120,6 +161,7 @@ function dblog (user, odometer, evtype)
 			.. conn:escape(user) .. "\", " .. odometer .. ",\"" .. evtype .. "\")")
 	assert(nr == 1, "Rows written to db not 1")
 	conn:commit()
+	journal_dirty = true
 end
 
 function display_idle (odo)
@@ -127,6 +169,7 @@ function display_idle (odo)
 end
 
 function display_active (odo_start, odo)
+	print(odo_start, odo)
 	local minutes = math.floor((odo-odo_start)/60)
 	local seconds = (odo-odo_start) % 60
 	display(" Time:   Cost:", string.format("%3.0f",minutes) .. ":" ..
@@ -141,10 +184,13 @@ end
 local isEnabled = false
 local user, odo_start
 local time_last_update = os.time()
+local time_last_jrnl = 0
+journal_dirty = true
 try(function() 
 	update_keys()
 end, function(e)
-	print("Could not load key list: ", e)
+	logger("Could not load key list")
+	print(e)
 end)
 
 try(function() 
@@ -153,6 +199,8 @@ try(function()
 end, function(e)
 	print("Failed to open port: ", e)
 end)
+
+
 
 while true do
 	try(function()
@@ -163,10 +211,23 @@ while true do
 				update_keys()
 				time_last_update = os.time()
 			end, function(e)
-				print("Could not update key list: ", e)
+				logger("Could not update key list")
+				print(e)
 				time_last_update = time_last_update + RETRY_INTERVAL
 			end)
 		end
+		
+		try(function() 
+			if (journal_dirty and os.time() - time_last_jrnl > RETRY_INTERVAL) then
+				upload_journal()
+				journal_dirty = false
+				-- we don't update time_last_jrnl unless there is a failure
+			end
+		end, function(e)
+			time_last_jrnl = os.time()
+			logger("Failed to upload journal")
+			print("Failed to upload journal: ", e)
+		end)
 		
 		set_enabled(isEnabled)
 		
@@ -176,13 +237,17 @@ while true do
 				dblog(user, odo, "logout")
 				user2 = get_rfid()
 				if (user2 ~= user) then
+					logger("Logged out user " .. user)
 					-- last person forgot to tag out
 					if is_valid_user(user2) then
+						logger("Logged in user " .. user2)
 						dblog(user2, odo, "login")
-						display("Welcome new user!")
+						user = user2
+						display("Welcome new user")
 						os.execute("sleep 1")
 						odo_start = odo
 					else	
+						logger("Attempted login from inactive fob: " .. user2)
 						display("Fob not active")
 						set_enabled(false)
 						isEnabled = false
@@ -190,6 +255,7 @@ while true do
 					end
 				else
 					-- same person tagged out
+					logger("Logged out user " .. user)
 					set_enabled(false)
 					display("Goodbye!")
 					os.execute("sleep 5")
@@ -206,6 +272,7 @@ while true do
 				user = get_rfid()
 				print(user)
 				if is_valid_user(user) then
+					logger("Logged in user " .. user)
 					isEnabled = true
 					set_enabled(true)
 					dblog(user, odo, "login")
@@ -213,6 +280,7 @@ while true do
 					display("Welcome!")
 					os.execute("sleep 2")
 				else
+					logger("Attempted login from inactive fob: " .. user)
 					display("Fob not active")
 					os.execute("sleep 5")
 				end
@@ -225,7 +293,7 @@ while true do
 		print("Error occurred: " .. e)
 		local stat
 		repeat
-			print("Trying to reset port")
+			logger("Trying to reset port")
 			os.execute("sleep 1")
 			try(function() 
 				if p ~= nil then
@@ -237,6 +305,6 @@ while true do
 				stat = true
 			end, function(e) print(e); stat = nil end)
 		until stat
-		print("Port reset OK")
+		logger("Port reset OK")
 	end)
 end
