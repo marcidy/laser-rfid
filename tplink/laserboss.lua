@@ -7,6 +7,8 @@ COST_PER_MIN = 0.25
 USB_PATH = "/sys/bus/usb/devices/usb1/authorized"
 UPDATE_INTERVAL = 3600
 RETRY_INTERVAL = 300
+-- a file with LASER_KEY and WP_KEY API keys defined (not public)
+dofile("/root/key.lua")
 
 -- open / create laser database
 sqlite3 = require("luasql.sqlite3")
@@ -21,7 +23,7 @@ rs232 = require("luars232")
 -- socket library
 http = require("socket.http")
 ltn12 = require("ltn12")
-dofile("key.lua")
+
 
 -- DO NOT CALL THIS WITH REMOTELY RETURNED DATA (like error messages!!!!)
 function logger(msg)
@@ -197,14 +199,15 @@ try(function()
 	open_port()
 	set_enabled(false)
 end, function(e)
-	print("Failed to open port: ", e)
+	logger("Failed to open port: ", e)
 end)
 
 
 
 while true do
+	local odo, scanned
 	try(function()
-		local odo, scanned = get_status()
+		odo, scanned = get_status()
 		assert(odo ~= nil and scanned ~= nil, "Status is invalid")
 		if os.time() - time_last_update > UPDATE_INTERVAL then
 			try(function() 

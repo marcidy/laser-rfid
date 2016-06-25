@@ -1,7 +1,7 @@
 // include the library code:
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
-#include "EEPROMAnything.h"
+// #include "EEPROMAnything.h"
 
 // Pins for LCD
 #define PIN_LCD_D7 16
@@ -23,9 +23,6 @@
 // power pin is active high
 #define LASER_PIN_PWR_ON	1
 
-// Button connected here will reset the counter
-// #define RESET_PIN 4
-
 // Relay to enable or disable the laser
 #define ENABLE_PIN 10
 // Transistor controlling the LCD backlight
@@ -40,6 +37,9 @@
 #define RFID_CODE_START 0x02
 #define RFID_CODE_END 0x03
 
+#define EEPROM_LOC1		0x30
+#define EEPROM_LOC2		0x40
+
 // ID-12LA RFID reader connected via the UART
 HardwareSerial Uart = HardwareSerial();
 
@@ -53,35 +53,35 @@ unsigned long time_total=0;
 
 void read_odo()
 {
-	lastPos = EEPROM.read(0);
-	if(lastPos == 0x11) 
+	lastPos = EEPROM.read(1);
+	if(lastPos == 0xFE) 
 	{
-		EEPROM_readAnything(0x11, time_total);
+		EEPROM.get(EEPROM_LOC1, time_total);
 	} 
-	else if(lastPos == 0x22) 
+	else if(lastPos == 0xFF) 
 	{
-		EEPROM_readAnything(0x22, time_total);
+		EEPROM.get(EEPROM_LOC2, time_total);
 	} 
 	else 
 	{
-		lastPos = 0x22;
+		lastPos = 0xFF;
 		time_total = 0;
 	}
 }
 
 void write_odo()
 {
-	if(lastPos == 0x11) 
+	if(lastPos == 0xFE)
 	{
-		EEPROM_writeAnything(0x22, time_total);
-		EEPROM.write(0, 0x22);
-		lastPos = 0x22;
+		EEPROM.put(EEPROM_LOC2, time_total);
+		EEPROM.write(1, 0xFF);
+		lastPos = 0xFF;
 	} 
-	else 
+	else
 	{
-		EEPROM_writeAnything(0x11, time_total);
-		EEPROM.write(0, 0x11);
-		lastPos = 0x11;
+		EEPROM.put(EEPROM_LOC1, time_total);
+		EEPROM.write(1, 0xFE);
+		lastPos = 0xFE;
 	}
 }
 
@@ -107,8 +107,6 @@ void setup()
 	digitalWrite(LASER_POWER_PIN, HIGH);
 	
 	read_odo();
-	
-	time_last = millis();
 }
 
 void loop() 
@@ -126,6 +124,7 @@ void loop()
 	static unsigned long lastWriteTime = time_total;
 	// accumulated fractional time in ms
 	static unsigned long time_ms = 0;
+	static unsigned long time_last = millis();
 	
 	if (Serial.available() > 0) 
 	{
@@ -133,6 +132,29 @@ void loop()
 	 
 		switch (serialCommand) 
 		{
+			case 'x':
+				if (serialByte == '\n')
+				{
+					time_total = 1000;
+					write_odo();
+					serialCommand = 0;
+				}
+				break;
+			case 'y':
+				if (serialByte == '\n')
+				{
+					time_total++;
+					write_odo();
+					serialCommand = 0;
+				}
+				break;
+			case 'z':
+				if (serialByte == '\n')
+				{
+					read_odo();
+					serialCommand = 0;
+				}
+				break;
 			case 'e':
 					// enable laser
 					if (serialByte == '\n') 
@@ -256,10 +278,10 @@ void loop()
 	{
 		switch(time_ms / 250) 
 		{
-			case 0: lcd.print('|'); break;
-			case 1: lcd.print('/'); break;
-			case 2: lcd.print('-'); break;
-			case 3: lcd.print('\\'); break;
+			case 0: lcd.print('/'); break;
+			case 1: lcd.print('-'); break;
+			case 2: lcd.print('/'); break;
+			case 3: lcd.print('|'); break;
 		}
 	}
 }
