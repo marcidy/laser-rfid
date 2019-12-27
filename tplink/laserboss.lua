@@ -3,6 +3,7 @@
 PORT_NAME = "/dev/ttyACM0"
 READ_TIMEOUT = 2000	-- in ms
 DB_FILE = "/root/laser.db"
+DB_FILE_PERSISTENT = "/root/laser-persistent.db"
 COST_PER_MIN = 0.25
 USB_PATH = "/sys/bus/usb/devices/usb1/authorized"
 UPDATE_INTERVAL = 3600
@@ -16,6 +17,12 @@ env = sqlite3.sqlite3()
 conn = env:connect(DB_FILE)
 conn:execute("CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY, time INTEGER, user_key_id TEXT, odometer INTEGER, evtype TEXT)")
 conn:commit()
+
+-- create persistent db if it doesn't exist, open connection when it does
+persistent_env = sqlite3.sqlite3()
+persistent = persistent_env:connect(DB_FILE_PERSISTENT)
+persistent:execute("CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY, time INTEGER, user_key_id TEXT, odometer INTEGER, evtype TEXT)")
+persistent:commit()
 
 -- serial port
 rs232 = require("luars232")
@@ -80,7 +87,7 @@ function upload_journal()
 	local cur = conn:execute("SELECT * from log ORDER BY id")
 	local row = {}
 	local ok
-	-- fetch, submit, and delete each journal record
+	-- fetch, submit, and delete each journal record from db, but leave them in persistent db
 	repeat
 		ok = cur:fetch(row, 'a')
 		if ok then
@@ -163,6 +170,9 @@ function dblog (user, odometer, evtype)
 			.. conn:escape(user) .. "\", " .. odometer .. ",\"" .. evtype .. "\")")
 	assert(nr == 1, "Rows written to db not 1")
 	conn:commit()
+	nr = persistent:execute("INSERT INTO log (time, user_key_id, odometer, evtype) VALUES (" .. os.time() .. ",\""
+			.. persistent:escape(user) .. "\", " .. odometer .. ",\"" .. evtype .. "\")")
+	assert(nr == 1, "Rows written to Persistent db not 1")
 	journal_dirty = true
 end
 
