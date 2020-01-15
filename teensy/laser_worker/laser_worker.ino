@@ -18,10 +18,10 @@
 #define LASER_PIN 			0
 // 5v from laser power supply
 #define LASER_POWER_PIN 	1
-// laser pin is active low
-#define LASER_PIN_FIRING	0
+// laser pin is active high (Light Object T9+ controller TTL pin, not TTL- pin)
+#define LASER_PIN_FIRING	HIGH
 // power pin is active high
-#define LASER_PIN_PWR_ON	1
+#define LASER_PIN_PWR_ON	HIGH
 
 // Relay to enable or disable the laser
 #define ENABLE_PIN 10
@@ -135,7 +135,7 @@ void loop()
 			case 'x':
 				if (serialByte == '\n')
 				{
-					time_total = 1000;
+					time_total = 1;  // Seconds
 					write_odo();
 					serialCommand = 0;
 				}
